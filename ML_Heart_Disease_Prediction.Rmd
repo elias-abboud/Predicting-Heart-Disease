@@ -1,0 +1,1094 @@
+---
+title: "Machine Learning: Predicting Heart Disease"
+author: "by Elias Abboud"
+date: "2023-12-10"
+
+output:
+  html_document:
+    theme: readable
+    highlight: espresso
+    number_sections: no
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+![Heart Disease](pic.jpeg)
+
+# Introduction
+
+In this project, we are utilizing a heart disease dataset. Heart disease remains one of the leading causes of mortality worldwide, presenting a significant public health challenge. The ability to accurately predict heart disease in individuals is crucial for early diagnosis and management, which can substantially reduce the risk of severe outcomes, including heart attacks and strokes. Developing machine learning models that can predict heart disease with high accuracy from clinical and demographic data has the potential to revolutionize healthcare and ultimately save lives. By developing such models, healthcare providers can identify at-risk individuals sooner and implement preventative measures for strokes.
+
+*1. Age:* (20 - 80) years old
+
+*2. Sex:* Male (0) Female (1) 
+
+*3. Chest Pain Type:* (1-2-3-4) there are 4 types of chest pains: 
+        -- Value 1: typical angina
+        -- Value 2: atypical angina
+        -- Value 3: non-anginal pain
+        -- Value 4: asymptomatic
+        
+*4. Cholesterol:* serum cholestoral in mg/dl
+
+*5. FBS* > 120 mg/dl  (1 = true; 0 = false): fasting blood sugar, Men and women with raised blood sugar levels have a greater risk of developing cardiovascular disease.
+
+*6. EKG results* (0-1-2): Electrocardiogram (EKG) results measure the electrical activity of the heart.  
+        -- Value 0: normal
+        -- Value 1: having ST-T wave abnormality (T wave inversions and/or ST elevation         or depression of > 0.05 mV)
+        -- Value 2: showing probable or definite left ventricular hypertrophy by Estes'         criteria
+        
+*7. Exercise Angina* (0-1): This binary feature indicates whether the individual experiences angina (chest pain) during exercise. Exercise-induced angina can be a sign of insufficient blood supply to the heart muscle during physical activity.
+
+*8. Blood Pressure BP*: Blood pressure is a crucial indicator of cardiovascular health. High blood pressure (hypertension) is a major risk factor for heart disease as it can lead to damage in the arteries and increase the workload on the heart.
+
+*9. ST Depression*: ST depression on an EKG is a sign of myocardial ischemia (insufficient blood supply to the heart). The degree of ST depression can indicate the severity of the ischemia.
+
+*10. Maximum Heart Rate*:The maximum heart rate achieved during exercise is a physiological parameter. Abnormalities in reaching an expected maximum heart rate might indicate cardiovascular issues.
+
+*11. Slope of ST* (1-2-3):This feature describes the slope of the ST segment on the EKG. Changes in the ST segment can indicate myocardial ischemia. 
+        -- Value 1: upsloping
+        -- Value 2: flat
+        -- Value 3: downsloping
+        
+*12. Thallium* (3-6-7): Thallium stress testing is a nuclear imaging technique used to evaluate blood flow to the heart.
+thal: 3 = normal; 6 = fixed defect; 7 = reversable defect 
+
+*13. Number of Vessels Fluro* (0-1-2-3): This feature may represent the number of coronary vessels showing abnormalities during a fluoroscopy procedure. The more vessels affected, the higher the likelihood of significant coronary artery disease.
+ 
+### Install and load required packages
+
+```{r, echo=TRUE, results='hide', message=FALSE}
+if (!require(ggplot2)) install.packages("ggplot2")
+if (!require(dplyr)) install.packages("dplyr")
+if (!require(caret)) install.packages("caret")
+if (!require(pROC)) install.packages("pROC")
+if (!require(htmltools)) install.packages("htmltools")
+if (!require(FactoMineR)) install.packages("FactoMineR")
+if (!require(factoextra)) install.packages("factoextra")
+if (!require(ROCR)) install.packages("ROCR")
+if (!require(randomForest)) install.packages("randomForest")
+if (!require(xgboost)) install.packages("xgboost")
+if (!require(party)) install.packages("party")
+if (!require(rpart)) install.packages("rpart")
+if (!require(ipred)) install.packages("ipred")
+if (!require(rpart.plot)) install.packages("rpart.plot")
+if (!require(partykit)) install.packages("partykit")
+if (!require(gbm)) install.packages("gbm")
+if (!require(e1071)) install.packages("e1071")
+
+
+library(ggplot2)
+library(dplyr)
+library(caret)
+library(pROC)
+library(stats)
+library(cluster)
+library(corrplot)
+library(htmltools)
+library(FactoMineR)
+library(factoextra)
+library(ROCR)
+library(randomForest)
+library(xgboost)
+library(party)
+library(rpart)
+library(ipred)
+library(rpart.plot)
+library(partykit)
+library(gbm)
+library(e1071)
+```
+
+### Reading the dataset
+```{r, echo=TRUE}
+data_set <- read.csv("Heart_Disease_Prediction.csv")
+```
+
+### Encoding Heart Disease as a binary variable
+```{r, echo=TRUE}
+# Encoding Heart Disease as a binary variable
+data_set$Heart.Disease <- ifelse(data_set$Heart.Disease == "Presence", 1, 0)
+
+# Plot correlation matrix
+numerical_features <- c('BP', 'Cholesterol', 'Max.HR', 'ST.depression','Heart.Disease' )
+cor_matrix <- cor(data_set[,numerical_features ])
+corrplot(cor_matrix, method = "circle", type = "upper", tl.cex = 0.5)                                                                                                            
+# Age Binning
+bins <- c(29, 39, 49, 59, 69, 79, 89)
+labels <- c('30-39', '40-49', '50-59', '60-69', '70-79', '80-89')
+
+data_set$Age_Group <- cut(data_set$Age, breaks = bins, labels = labels, right = FALSE)
+print(head(data_set))
+
+# Create a new feature 'st_depression_bp_interaction'
+data_set$st_depression_bp_interaction <- data_set$ST.depression * data_set$BP
+print(head(data_set))
+```
+We can see that the two features having the highest positive correlation with the prescence or abscence of the heart disease are the ST Depression followed by BP. We have other features that posses a significant negative correlation with the target such as the Maximum Heart Rate.
+
+Since ST Depression and BP are highly correlated with the target, we created a new feature 'st_depression_bp_interaction'. 
+Combining the features through interaction terms can provide additional information and potentially may enhance the model's ability to capture complex relationships in the data. Inaddition to that, we are providing the model with additional variables that may have higher importance in predicting the target variable.
+
+```{r, echo=TRUE}
+# Histogram showing the distribution of ST Depression * BP Interaction by Heart Disease
+ggplot(data_set, aes(x = st_depression_bp_interaction, fill = factor(Heart.Disease))) +
+  geom_histogram(position = "dodge", alpha = 0.7, bins = 30) +
+  labs(title = "Distribution of ST Depression * BP Interaction by Heart Disease",
+       x = "ST Depression * BP Interaction",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal()
+```
+
+As the interaction term between the two features increases, the results are more associated with the prescence of a heart disease. Low values are more associated with an absecnce of a heart disease. This is explained by the positive correlation that both ST Depression and BP have with the target.
+
+# Data Preprocessing
+
+### 1. Handling Missing Values
+
+```{r, echo=TRUE}
+# Check for missing values in each column
+print(sapply(data_set, function(x) sum(is.na(x))))
+
+# Substitute missing values with the mean for each column
+data_set <- data_set %>% 
+  mutate(across(where(is.numeric), ~ifelse(is.na(.), mean(., na.rm = TRUE), .)))
+
+# Check again for missing values to confirm they are handled
+print(sapply(data_set, function(x) sum(is.na(x))))
+```
+
+### 2. Removing outliers
+
+```{r, echo=TRUE}
+# Function to remove outliers based on IQR for a specific column and display them
+remove_outliers <- function(data, column) {
+  Q1 <- quantile(data[[column]], 0.25)
+  Q3 <- quantile(data[[column]], 0.75)
+  IQR <- IQR(data[[column]])
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  
+  # Detecting outliers
+  outliers <- data[!(data[[column]] > lower_bound & data[[column]] < upper_bound), ]
+  if(nrow(outliers) > 0) {
+    cat("Outliers in", column, ":\n")
+    print(outliers[[column]])
+    cat("\n")
+  }
+
+  # Removing outliers
+  return(data[data[[column]] > lower_bound & data[[column]] < upper_bound, ])
+}
+
+# Columns to remove outliers from
+columns_to_check <- c('BP', 'Max.HR', 'Age', 'Cholesterol', 'ST.depression')
+
+# Removing outliers for each specified column and displaying them
+for (column in columns_to_check) {
+  data_set <- remove_outliers(data_set, column)
+}
+
+# Display the dimensions of the dataset after outlier removal
+dim(data_set)
+```
+
+# Graphs
+
+```{r, echo=TRUE}
+# Age VS Heart Disease
+data_set$Age_Group <- cut(data_set$Age, breaks = seq(20, 100, by = 20), include.lowest = TRUE)
+
+ggplot(data_set, aes(x = Age_Group, fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "Age vs Heart Disease",
+       x = "Age",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo=TRUE}
+# Sex VS Heart Disease
+
+ggplot(data_set, aes(x = factor(Sex), fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "Sex vs Heart Disease",
+       x = "Sex",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  scale_x_discrete(labels = c("0" = "Male", "1" = "Female")) +
+  theme_minimal()
+```
+
+```{r, echo=TRUE}
+# Chest Pain Type VS Heart Disease
+ggplot(data_set, aes(x = factor(Chest.pain.type), fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "Chest Pain Type vs Heart Disease",
+       x = "Chest Pain Type",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  scale_x_discrete(labels = c("1" = "Type 1", "2" = "Type 2", "3" = "Type 3", "4" = "Type 4")) +
+  theme_minimal()
+```
+
+```{r, echo=TRUE}
+# BP VS Heart Disease 
+data_set$BP_group <- cut(data_set$BP, breaks = seq(50, 250, by = 50), include.lowest = TRUE)
+
+ggplot(data_set, aes(x = BP_group, fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "BP vs Heart Disease",
+       x = "BP",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo=TRUE}
+# Cholesterol VS Heart Disease
+data_set$Cholesterol_Group <- cut(data_set$Cholesterol, breaks = seq(100, 400, by = 50), include.lowest = TRUE)
+
+ggplot(data_set, aes(x = Cholesterol_Group, fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "Cholesterol vs Heart Disease",
+       x = "Cholesterol",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo=TRUE}
+# FBS > 120 VS Heart Disease
+ggplot(data_set, aes(x = factor(FBS.over.120), fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "FBS > 120 * Heart Disease",
+       x = "FBS > 120",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  scale_x_discrete(labels = c("0" = "No", "1" = "Yes")) +
+  theme_minimal()
+```
+
+```{r, echo=TRUE}
+# EKG Results VS Heart Disease 
+ggplot(data_set, aes(x = factor(EKG.results), fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "EKG Results * Heart Disease",
+       x = "EKG Results",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal()
+```
+
+```{r, echo=TRUE}
+# Max HR VS Heart Disease 
+data_set$Max.HR_group <- cut(data_set$Max.HR, breaks = seq(50, 250, by = 50), include.lowest = TRUE)
+
+ggplot(data_set, aes(x = Max.HR_group, fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "Max HR * Heart Disease",
+       x = "Max HR",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal()
+```
+
+```{r, echo=TRUE}
+# Exercise Angina VS Heart Disease
+ggplot(data_set, aes(x = factor(Exercise.angina), fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "Exercise Angina * Heart Disease",
+       x = "Exercise Angina",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal()
+```
+
+```{r, echo=TRUE}
+# ST Depression VS Heart Disease 
+data_set$ST.depression_group <- cut(data_set$ST.depression, breaks = seq(0, 5, by = 0.5), include.lowest = TRUE)
+
+ggplot(data_set, aes(x = ST.depression_group, fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "ST Depression * Heart Disease",
+       x = "ST Depression",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal()
+```
+
+```{r, echo=TRUE}
+# ST Slope VS Heart Disease 
+ggplot(data_set, aes(x = factor(Slope.of.ST), fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "ST Slope * Heart Disease",
+       x = "ST Slope",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal()
+```
+
+```{r, echo=TRUE}
+# Number of Vessels Fluro VS Heart Disease 
+ggplot(data_set, aes(x = factor(Number.of.vessels.fluro), fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "Number of Vessels Fluro * Heart Disease",
+       x = "Number of Vessels Fluro",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal()
+```
+
+```{r, echo=TRUE}
+# Thallium VS Heart Disease 
+ggplot(data_set, aes(x = factor(Thallium), fill = factor(Heart.Disease))) +
+  geom_bar(position = "dodge", alpha = 0.7) +
+  labs(title = "Thallium * Heart Disease",
+       x = "Thallium",
+       y = "Frequency") +
+  scale_fill_manual(values = c("navy", "coral"),
+                    name = "Heart Disease",
+                    breaks = c("0", "1"),
+                    labels = c("absence", "presence")) +
+  theme_minimal()
+
+```
+
+# Data Splitting
+
+```{r, echo=TRUE}
+# Split the data into training and testing sets
+set.seed(123) # Setting seed for reproducibility
+training_indices <- sample(1:nrow(data_set), 0.8 * nrow(data_set))
+
+train_data <- data_set[training_indices, ]
+test_data <- data_set [-training_indices, ]
+
+# Print out the first few rows of the train and test data
+print(head(train_data))
+print(head(test_data))
+```
+
+# PCA
+
+```{r, echo=TRUE}
+# Select only the numerical variables for PCA
+# Assuming all your variables are numerical, else adjust the selection
+
+numerical_data <- train_data %>% 
+                  select(-Heart.Disease) %>% 
+                  select_if(is.numeric)
+
+# Standardizing the data
+numerical_data_scaled <- scale(numerical_data)
+
+# Performing PCA
+res.pca <- PCA(numerical_data_scaled, graph = FALSE)
+
+eig.val <- get_eigenvalue(res.pca)
+eig.val
+```
+
+```{r, echo=TRUE}
+# Visualizing Eigenvalues (Scree plot)
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 50))
+```
+
+The results of visualization illustrate that First Principal Component): It has the highest eigenvalue of 3.546996464 and explains about 25.3% of the variance in the data. This indicates that it captures the most significant pattern in the data.Then the second component explains an additional 11.048% of the variance, bringing the cumulative variance explained to 36.38%. And by the time we reach the last predictor the cumulative variance explained is 100%, meaning all the components together explain the entire variance in the dataset.In the PCA we are looking for a "cut-off" point where the addition of more components doesn't significantly increase the variance explained. As we can see from the Scree Plot, the line becomes horizontal, indicating very little variation, after the eighth component in which we have accounted for almost 82% of the variablility.Therefore, we will consider the six most important variables that we will discuss and deduce in the results and graphs below.
+
+```{r, echo=TRUE}
+# Extracting results for individuals and variables
+pca_individuals <- get_pca_ind(res.pca)
+pca_variables <- get_pca_var(res.pca)
+```
+
+### Visualizing Variables
+
+```{r, echo=TRUE}
+# Visualizing the variables
+fviz_pca_var(res.pca, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE)
+```
+
+Analysis: This plot visualizes the variables in the factor space, showing how each variable contributes to the two principal components.The plot combines a scatterplot of the scores of the observations and the loadings of the variables, shows the projection of the variables onto the first two principal components. It confirms that Age, BP, and Cholesterol have strong projections onto Dim-1, while variables such as ST depression and the st_depression_bp_interaction project well onto both Dim-1 and Dim-2.
+
+```{r, echo=TRUE}
+# Results of variables contributing the most to dimension 1 and 2
+res.desc <- dimdesc(res.pca, axes = c(1,2), proba = 0.05)
+```
+
+#### Description of 1st Dimension
+
+```{r, echo=TRUE}
+# Description of dimension 1
+res.desc$Dim.1
+# Contribution of variables to Dim1
+fviz_contrib(res.pca, choice= "var", axes =1, top=10)
+```
+
+This bar chart shows the percentage contribution of each variable to the first principal component (Dim-1). Variables like ST depression and st_depression_bp_interaction, Max heart rate are the top contributors, with others like Thallium, Exercise angina, and Number of vessels fluro contributing less.
+
+#### Description of 2nd Dimension
+
+```{r, echo=TRUE}
+# Description of dimension 2
+res.desc$Dim.2
+# Contribution of variables to Dim2
+fviz_contrib(res.pca, choice= "var", axes =2, top=10)
+```
+
+This bar chart shows the percentage contribution of each variable to the second principal component (Dim-2). Age, Cholesterol, Blood Pressure, and Thallium are the top contributors, with exercise angine, cholesteroland other variables contributing less.
+
+```{r, echo=TRUE}
+# Correlation of variables with PCA dimensions
+corrplot(pca_variables$cos2, is.corr = FALSE)
+```
+
+This plot displays the squared cosine (cos2) values, which indicate the quality of the representation of the variables on the principal components. High cos2 values for a variable on a certain dimension mean that the dimension effectively captures the variance of that variable. Variables such as ST depression, Age, BP, and Cholesterol have higher cos2 values, especially on Dim-1 and Dim-2, indicating that these components capture a significant amount of the information contained in these variables.
+
+
+```{r, echo=TRUE}
+# Total cos2 of variables on Dim.1 and Dim.2
+fviz_cos2(res.pca, choice = "var", axes = 1:2)
+```
+
+In this chart, ST depression and its correlation with blood pressure predictors have the highest cos2 values, suggesting they are best represented by Dim-1 and Dim-2. They are followed by Thallium, ST Max heart rate, age, and Sex, which also have relatively high cos2 values, indicating a good representation on these dimensions.However, FBS over 120 has the lowest cos2 value, indicating it is the least well-represented variable on Dim-1 and Dim-2.
+
+As a final result, from this plot, we can derive several insights and deduce the 8 most important predictors that contribute the most to the variability of our data.
+Considering the combination of these graphs, the eight most important variables are:
+
+1. ST depression: High contribution to Dim-1 with a high cos2 value.
+2. st_depression_bp_interaction: High contribution to both Dim-1 and Dim-2.
+3. Age: High contributions to both Dim-1 and also contributes to Dim-2.
+4. Blood Pressure (BP): High contributor to Dim-2 and strongly projected onto Dim-1.
+5. Sex: Highest contribution to Dim-2.
+6. Slope of ST: Contributes highlt to Dim 1
+7. Max HR (Maximum Heart Rate): High contribution to Dim-1.
+8. Thallium: Significant contribution to Dim-2 and contributes to Dim 1 as well.
+
+Overall interpretation: The PCA suggests that while the first two components capture a significant part of the variability in the dataset, there's still a lot of information (over 65%) that might be spread out over other components, given the combined explained variance is less than 35%. This means that while some insights can be gleaned from these two components, they do not capture all the complexity of the dataset. Choosing components that were proven to contribute to variability form the above visualization aids can help enhance model accuracy, we will test this out on logistic regression model.
+
+```{r, echo=TRUE}
+# Performing logistic regression using the predictors that may be the most contributing the variance according to our PCA analysis
+
+# Select only the predictors identified by PCA for the logistic regression model
+selected_predictors <- c('ST.depression', 'st_depression_bp_interaction', 'Age', 'BP', 'Sex', 'Slope.of.ST', 'Max.HR', 'Thallium')
+
+# Subset the training and test data to include only the selected predictors and the outcome variable
+train_data_selected <- train_data[, c(selected_predictors, 'Heart.Disease')]
+test_data_selected <- test_data[, c(selected_predictors, 'Heart.Disease')]
+
+# Logistic Regression Model
+set.seed(123) # For reproducibility
+log_model <- glm(Heart.Disease ~ ., data = train_data_selected, family = binomial())
+
+# Model Summary
+summary(log_model)
+```
+
+Sex, Maximum heart rate, and Thallium are statistically significant predictors of heart disease. The other variables  do not show statistically significant associations with the outcome in this model.
+
+```{r, echo=TRUE}
+# Model Prediction on Test Data
+predictions <- predict(log_model, newdata = test_data_selected, type = "response")
+
+# Binarize predictions based on a threshold 
+predicted_class <- ifelse(predictions > 0.5, "Presence", "Absence")
+
+# Convert the actual outcomes to 'Presence' and 'Absence' to match predicted classes
+actual_outcomes <- ifelse(test_data_selected$Heart.Disease == 1, "Presence", "Absence")
+
+# Confusion Matrix to evaluate model performance
+conf_matrix <- table(Predicted = predicted_class, Actual = actual_outcomes)
+
+# Print out the confusion matrix
+print(conf_matrix)
+```
+
+The model correctly predicted the absence of heart disease in 22 cases.(true negatives), and predicted the presence of heart disease in 19 cases (true positives), it incorrectly predicted the presence of heart disease in 2 cases where there was no heart disease (false positives), and ncorrectly predicted the absence of heart disease in 7 cases where heart disease was actually present (false negatives).
+
+```{r, echo=TRUE}
+# Calculating the model's accuracy
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Accuracy of the model:", accuracy))
+```
+
+> This indicates that in 82% of the cases, model is correctly identifying whether heart disease is present or absent.
+
+#### Additional Performance Metrics
+
+```{r, echo=TRUE}
+# Sensitivity and Specificity from the confusion matrix
+sensitivity <- conf_matrix[2,2] / sum(conf_matrix[2,])
+specificity <- conf_matrix[1,1] / sum(conf_matrix[1,])
+print(paste("Sensitivity of the model:", sensitivity))
+print(paste("Specificity of the model:", specificity))
+```
+
+Sensitivity:  model correctly identified 90.5% of the cases where heart disease was actually present.
+
+Specificity:  model correctly identified 75.9% of the cases where heart disease was actually absent.
+
+Overall, the model is quite accurate overall, with high sensitivity but moderate specificity. It's better at identifying cases with heart disease than at correctly identifying cases without heart disease.
+
+```{r, echo=TRUE}
+# ROC Curve and AUC
+roc_curve <- roc(response = test_data_selected$Heart.Disease, predictor = predictions)
+auc_value <- auc(roc_curve)
+
+# Plot ROC Curve
+plot(roc_curve, main = sprintf("ROC Curve (AUC = %0.2f)", auc_value))
+
+# Print AUC value
+print(auc_value)
+```
+
+The model has an AUC of approximately 0.883, which is considered to be good. It indicates that the model has a high ability to discriminate between positive and negative cases of heart disease. 
+
+# Clustering
+
+## K-Means Cluster:
+
+```{r, echo=TRUE}
+# Selecting all numerical variables except 'Heart.Disease'
+cluster_data <- data_set %>% select(-Heart.Disease) %>% select_if(is.numeric)
+
+# Scale the data
+scaled_data <- scale(cluster_data)
+```
+
+```{r, echo=TRUE}
+# Determine optimal number of clusters using the elbow method
+wss <- sapply(1:10, function(k){kmeans(scaled_data, k, nstart = 20)$tot.withinss})
+plot(1:10, wss, type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K", ylab="Total within-clusters sum of squares")
+```
+
+There is no exact answer here but according to the graph the curve starts to flatten out after k=3 and k=4. Therefore, k=4 and k=3 are possibly the best choices for the number of clusters. We will try to group based on both k=3 and k=4 and see which model clusters better.
+
+```{r, echo=TRUE}
+# Perform K-means clustering on PCA results, where k=3
+set.seed(123) 
+km.res <- kmeans(res.pca$ind$coord[, 1:2], centers = 3, nstart = 50)
+# nstart=50 to avoid being stuck in a local optimum, and using k=3
+# Add the cluster assignments to the PCA object
+res.pca$ind$cluster <- as.factor(km.res$cluster)
+```
+
+```{r, echo=TRUE}
+# Convert PCA coordinates and cluster assignments into a dataframe
+pca_data <- as.data.frame(res.pca$ind$coord)
+pca_data$cluster <- as.factor(km.res$cluster)
+
+# Visualization of PCA with k-means clusters
+ggplot(pca_data, aes(x = Dim.1, y = Dim.2, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "K-means Clustering on PCA Results", x = "Principal Component 1", y = "Principal Component 2") +
+  theme_minimal() +
+  scale_color_manual(values = c("blue", "green", "red"))
+```
+
+This scatter plot illustrates the results of K-means clustering on data reduced to two principal components and where k means cluster was performed on the basis that K=3  we can see that the green cluster is somehow intermixed with the blue and red clusters, showing a bit of overlap, indicating low distinct separation.
+
+```{r, echo=TRUE}
+# Perform K-means clustering on PCA results, where k=4
+set.seed(123) 
+km.res <- kmeans(res.pca$ind$coord[, 1:2], centers = 4, nstart = 50)
+# nstart=50 to avoid being stuck in a local optimum, and using k=3
+# Add the cluster assignments to the PCA object
+res.pca$ind$cluster <- as.factor(km.res$cluster)
+```
+
+This scatter plot also illustrates the results of K-means clustering on data reduced to two principal components, but here we take K=4. Four clusters are shown, each represented by a different color, with some low degree of overlap, particularly between the green and yellow clusters. The distribution along the first principal component suggests it's a significant factor in differentiating the clusters, with the blue cluster positioned alone and non overlapping on the left. The second principal component  also contributes to the separation, especially for the red cluster at the bottom. 
+
+#### Comparison of clusters k=3 & k=4:
+
+Comparing the two plots, the four-cluster plot appears to show a better separation of the observations, with less overlap between clusters. The presence of a fourth yellow cluster in the k=4 plot seems to catch some of the observations that were contributing to the overlap in the first plot. This suggests that the four-cluster solution provides a more refined grouping and could be considered a better representation for the K means clustering.
+
+
+```{r}
+# Convert PCA coordinates and cluster assignments into a dataframe
+pca_data <- as.data.frame(res.pca$ind$coord)
+pca_data$cluster <- as.factor(km.res$cluster)
+
+# Visualization of PCA with k-means clusters
+ggplot(pca_data, aes(x = Dim.1, y = Dim.2, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "K-means Clustering on PCA Results", x = "Principal Component 1", y = "Principal Component 2") +
+  theme_minimal() +
+  scale_color_manual(values = c("blue", "green", "red", "yellow"))
+```
+
+Hierarchical Clustering, we will perform the clustering twice, once using using the euclidean distance for the distance matrix, and once using the correlation-based matrix. We will go with complete linkage since it yields evenly sized clusters and is widely used.
+
+## Hierarchical Clusterinng Using Eucildean distance
+
+```{r}
+# Selecting all numerical variables except 'Heart.Disease'
+cluster_data <- data_set %>% select(-Heart.Disease) %>% select_if(is.numeric)
+
+# Scale the data
+scaled_data <- scale(cluster_data)
+
+# Compute the distance matrix using euclidean distance
+d <- dist(scaled_data, method = "euclidean")
+
+# Performing hierarchical clustering using the complete linkage
+hc <- hclust(d, method = "complete")
+
+# Ploting the dendrogram 
+plot(hc, main = "Hierarchical Clustering with Complete Linkage and Euceldian Distance", xlab = "", sub = "", labels = FALSE, cex = 0.2)
+
+# Define the number of clusters
+k <- 5 
+
+# Get cluster assignments
+clusters <- cutree(hc, k)
+
+# Define colors for the rectangles
+colors <- rainbow(k)
+
+# Draw rectangles around clusters
+for (i in 1:k) {
+    rect.hclust(hc, k = k, which = i, border = colors[i])
+}
+```
+
+The dendrogram from hierarchical clustering with complete linkage shows the hierarchical relationship between clusters in our dataset. The colored rectangles indicate five clusters, and each cluster is defined by the branches that fall within each rectangle, suggesting a certain level of similarity within each group. However, it seems like the green cluster is not well seperated. 
+
+## Hierarchical Clustering Using Correlation Distance
+
+```{r}
+# Selecting all numerical variables except 'Heart.Disease'
+cluster_data <- data_set %>% select(-Heart.Disease) %>% select_if(is.numeric)
+
+# Scale the data
+scaled_data <- scale(cluster_data)
+
+# Compute the distance matrix using correlation distance
+d <- as.dist(1 - cor(t(scaled_data)))
+
+# Performing hierarchical clustering using the complete linkage
+hc <- hclust(d, method = "complete")
+
+# Plotting the dendrogram 
+plot(hc, main = "Hierarchical Clustering with Complete Linkage and Correlation Distance", xlab = "", sub = "", labels = FALSE, cex = 0.2)
+
+# Define the number of clusters
+k <- 5 
+
+# Get cluster assignments
+clusters <- cutree(hc, k)
+
+# Define colors for the rectangles
+colors <- rainbow(k)
+
+# Draw rectangles around clusters
+for (i in 1:k) {
+    rect.hclust(hc, k = k, which = i, border = colors[i])
+}
+```
+
+The dendrogram represents hierarchical clustering using complete linkage and correlation distance, revealing a structure with 6 clusters, unlike the 5 clusters we saw in the previous dendogram, this might indicate that using correlation instead of euclidean on our data set performs better.
+
+# Trees
+
+## Decision Tree
+
+```{r, echo=TRUE}
+# Fit a decision tree model
+tree_model <- rpart(Heart.Disease ~ ., data = train_data, method = "class")
+rpart.plot(tree_model, extra = 2, main = "Decision Tree")
+
+# The fitted decision tree has a depth of 3 and 6 leafs.
+```
+
+```{r, echo=TRUE}
+# Make predictions on the test set
+predictions <- predict(tree_model, test_data, type = "class")
+
+# Calculate accuracy
+conf_matrix <- table(predictions, test_data$Heart.Disease)
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+
+cat("Decision Tree Accuracy:", accuracy, "\n")
+```
+
+```{r, echo=TRUE}
+# ROC Curve
+prediction_probs <- predict(tree_model, test_data, type = "prob")[, "1"]
+
+# Create ROC curve
+roc_curve <- roc(test_data$Heart.Disease, prediction_probs)
+
+# Calculate AUC
+auc_value <- auc(roc_curve)
+cat("Decision Tree AUC:", auc_value, "\n")
+
+# Plot ROC curve with AUC
+plot(roc_curve, col = "blue", lwd = 2, main = paste("Decision Tree ROC Curve (AUC =", round(auc_value, 3), ")"))
+abline(a = 0, b = 1, col = "gray", lty = 2)
+```
+
+#### Fitting a decision tree model with pruning (using cp and minsplit)
+
+```{r, echo=TRUE}
+tree_model_pruned <- rpart(Heart.Disease ~ ., data = train_data, method = "class", cp = 0.001, minsplit = 40)
+```
+
+Setting the parameters:
+
+* 'cp' (complexity parameter) and 'minsplit' are hyperparameters related to pruning. 
+* 'minsplit' is a parameter that sets the minimum number of data points required to split a node during the tree-building process.
+* 'cp' is set to 0.001 and 'minsplit' to 40
+
+```{r, echo=TRUE}
+# Make predictions on the test set
+predictions_pruned <- predict(tree_model_pruned, test_data, type = "class")
+
+# Calculate accuracy
+conf_matrix_pruned <- table(predictions_pruned, test_data$Heart.Disease)
+accuracy_pruned <- sum(diag(conf_matrix_pruned)) / sum(conf_matrix_pruned)
+
+cat("Pruned Decision Tree Accuracy:", accuracy_pruned, "\n")
+
+# ROC Curve
+prediction_probs_pruned <- predict(tree_model_pruned, test_data, type = "prob")[, "1"]
+
+# Create ROC curve
+roc_curve_pruned <- roc(test_data$Heart.Disease, prediction_probs_pruned)
+
+# Calculate AUC
+auc_value_pruned <- auc(roc_curve_pruned)
+cat("Pruned Decision Tree AUC:", auc_value_pruned, "\n")
+
+# Plot ROC curve with AUC
+plot(roc_curve_pruned, col = "blue", lwd = 2, main = paste("Pruned Decision Tree ROC Curve (AUC =", round(auc_value_pruned, 3), ")"))
+abline(a = 0, b = 1, col = "gray", lty = 2)
+```
+
+```{r, echo=TRUE}
+# Visualize the pruned decision tree
+rpart.plot(tree_model_pruned, extra = 2, main = "Pruned Tree")
+```
+
+Comparing the two fitted decision trees, it is clear that the unpruned original desion tree is not overfitting the data as it is performing better than the simplified pruned tree, which has a depth of 3 and 4 leafs. Both accuracy and AUC values for unpruned decision tree were higher. 
+
+## HyperParameter Tuning
+
+Since pruning the tree did not yield better results we wanted to further investigate parameters effect on accuracy 
+
+```{r, echo=TRUE}
+# Set seed for reproducibility
+set.seed(123)
+
+x_train <- subset(train_data, select = -Heart.Disease)  # Features
+y_train <- train_data$Heart.Disease  # Target variable
+
+# Create a data frame with the features and target
+train_data <- data.frame(x_train, Heart.Disease = y_train)
+
+# Set up hyperparameters
+max_depth_vals <- c(5, 10, 15, 25, 30)
+min_samples_split_vals <- c(2, 5, 10, 15, 100)
+min_samples_leaf_vals <- c(1, 2, 5, 10)
+max_features_vals <- c(1, 2, 5, 10)
+
+
+# Initialize variables to store the best hyperparameters
+best_accuracy <- 0
+best_hyperparams <- NULL
+
+# Loop through hyperparameter combinations
+for (max_depth in max_depth_vals) {
+  for (min_samples_split in min_samples_split_vals) {
+    for (min_samples_leaf in min_samples_leaf_vals) {
+      for (max_features in max_features_vals) {
+        
+        # Fit the decision tree model
+        hp_model <- rpart(
+          Heart.Disease ~ .,
+          data = train_data,
+          method = "class",
+          control = rpart.control(
+            maxdepth = max_depth,
+            minsplit = min_samples_split,
+            minbucket = min_samples_leaf,
+            maxfeatures = max_features
+          )
+        )
+        
+        # Make predictions on the test set
+        pred_val <- predict(hp_model, newdata = test_data, type = "class")
+        
+        # Calculate accuracy on the test set
+        accuracy <- sum(pred_val == test_data$Heart.Disease) / nrow(test_data)
+ 
+        
+        # Check if the current hyperparameters yield better accuracy
+        if (accuracy > best_accuracy) {
+          best_accuracy <- accuracy
+          best_hyperparams <- c(
+            max_depth = max_depth,
+            min_samples_split = min_samples_split,
+            min_samples_leaf = min_samples_leaf,
+            max_features = max_features
+          )
+        }
+      }
+    }
+  }
+}
+```
+
+```{r, echo=TRUE}
+# Print the best hyperparameters
+cat("The best hyperparameters are:\n")
+print(best_hyperparams)
+```
+
+## Boosting
+
+```{r, echo=TRUE}
+set.seed(123)
+
+# Fit a boosted model (Gradient Boosting Machine)
+boost_model <- gbm(Heart.Disease ~ ., data = train_data, distribution = "bernoulli", n.trees = 500, interaction.depth = 3)
+```
+
+```{r, echo=TRUE}
+# Make predictions on the test set
+boost_predictions <- predict(boost_model, newdata = test_data, n.trees = 500, type = "response")
+
+# Convert predictions to probabilities for class "Presence"
+boost_prediction_probs <- as.numeric(boost_predictions)
+
+# Create ROC curve
+boost_roc_curve <- roc(test_data$Heart.Disease, boost_prediction_probs)
+
+# Calculate AUC
+boost_auc_value <- auc(boost_roc_curve)
+cat("Boosted Model AUC:", boost_auc_value, "\n")
+
+# Plot ROC curve with AUC
+plot(boost_roc_curve, col = "blue", lwd = 2, main = paste("Boosted Model ROC Curve (AUC =", round(boost_auc_value, 3), ")"))
+abline(a = 0, b = 1, col = "gray", lty = 2)
+```
+
+```{r, echo=TRUE}
+# Make binary predictions based on a threshold (e.g., 0.5)
+boost_binary_predictions <- ifelse(boost_prediction_probs > 0.5, 1, 0)
+```
+
+Binary predictions are made by thresholding the predicted probabilities at 0.5.
+If the predicted probability is greater than 0.5, the observation is classified as 1 (Presence), otherwise as 0 (Absence).
+
+## Random Forest
+
+```{r, echo=TRUE, warning=FALSE}
+# Fit the random forest model with the best random seed
+rf_model <- randomForest(Heart.Disease ~ ., data = train_data, ntree = 500, mtry = 4, random_state = best_x)
+rf_predictions <- predict(rf_model, newdata = test_data)
+```
+
+```{r, echo=TRUE}
+# Create ROC curve for random forest model
+rf_roc_curve <- roc(test_data$Heart.Disease, rf_predictions)
+
+# Calculate AUC for random forest model
+rf_auc_value <- auc(rf_roc_curve)
+cat("Random Forest AUC:", rf_auc_value, "\n")
+
+# Plot ROC curve with AUC for random forest model
+plot(rf_roc_curve, col = "blue", lwd = 2, main = paste("Random Forest ROC Curve (AUC =", round(rf_auc_value, 3), ")"))
+abline(a = 0, b = 1, col = "gray", lty = 2)
+```
+
+After fitting different tree models, a Random Forest model performs the best with a very high AUC value of 0.909.
+
+Randomly sampling a subset of features helps improve the generalization ability of the model. It introduces diversity in the trees, making the model more robust and less subject to overfitting. 
+For the Decision Tree model, unpruned tree model (Accuracy= 84%, AUC=0.856) recorded a slighly better performance than a pruned tree model (Accuracy= 78%, AUC= 0.812).
+
+Therefore, we tried to investigate the different parameters achieving the best accuracy in a decision tree model. The parameters used are: Depth, Minimum sample split, Minimum sample leaf and Maximum features. 
+
+The results returned that a tree of depth 5, a minimum of 2 sample split and 10 minimum sample leaf achieves the best accuracy. 
+This explains why the pruned tree model returned lower result values.
+
+Upon applying boosting the accuracy of the model slightly decreased to 80% compared to DT model however, its AUC value (0.867) was comparable to DT model. This could be due to the choice of the threshold (0.5). Yet, the boosting model perfomed very well with a slightly higher AUC.
+
+# SVM Model
+
+In this analysis, various SVM models were trained with different hyperparameter configurations, including **kernels** _(linear, radial, polynomial)_, **gamma**, **degree**, and **cost** values. The goal was to identify the best-performing model for predicting heart disease.
+
+```{r, echo=TRUE}
+# Set seed for reproducibility
+set.seed(123)
+
+# Initialize variables to keep track of the best model
+best_accuracy <- 0
+best_hyperparameters <- NULL
+best_svm_model <- NULL
+best_roc_auc <- 0
+
+# Define vectors of hyperparameter values to search
+kernels <- c("linear", "radial", "polynomial")
+gamma_values <- c(0.01, 0.1, 1)
+degree_values <- c(2, 3, 4)
+cost_values <- c(0.1, 1, 10)
+
+# Loop through different hyperparameters
+for (kernel in kernels) {
+  for (gamma in gamma_values) {
+    for (degree in degree_values) {
+      for (cost in cost_values) {
+        cat("Kernel:", kernel, "Gamma:", gamma, "Degree:", degree, "Cost:", cost, "\n")
+        
+        # Train an SVM model
+        if (kernel == "linear") {
+          svm_model <- svm(Heart.Disease ~ ., data = train_data, kernel = kernel, type = "C-classification",  cost = cost)
+        } else if (kernel == "radial") {
+          svm_model <- svm(Heart.Disease ~ ., data = train_data, kernel = kernel, type = "C-classification", gamma = gamma, cost = cost)
+        } else if (kernel == "polynomial") {
+          svm_model <- svm(Heart.Disease ~ ., data = train_data, kernel = kernel, type = "C-classification", degree = degree, cost = cost)
+        }
+        
+        # Make predictions on the test set
+        predictions <- predict(svm_model, test_data)
+        
+        # Evaluate and print the performance
+        confusion_matrix <- table(predictions, test_data$Heart.Disease)
+        accuracy <- sum(diag(confusion_matrix))/sum(confusion_matrix)
+        
+        print(confusion_matrix)
+        cat("Accuracy:", accuracy, "\n\n")
+        
+        # Check if the current model is better than the previous best
+        if (accuracy > best_accuracy) {
+          best_accuracy <- accuracy
+          best_hyperparameters <- c(kernel = kernel, gamma = gamma, degree = degree, cost = cost)
+          best_svm_model <- svm_model
+        }
+      }
+    }
+  }
+}
+```
+
+#### The hyperparameters of the best performing SVM model and its accuracy:
+
+```{r, echo=TRUE}
+# Print the best hyperparameters and accuracy
+cat("Best Hyperparameters:\n")
+print(best_hyperparameters)
+cat("\nBest Accuracy:", best_accuracy, "\n")
+```
+
+> After exhaustive exploration, the model with the following hyperparameters emerged as the best performer: Kernel - Linear, Gamma - 0.01, Degree - 2, Cost - 0.1. This model achieved an accuracy of 84% on the test set.
+
+#### Evaluating Model Performance:
+
+```{r, echo=TRUE}
+# Make predictions on the test set
+svm_predictions <- predict(best_svm_model, newdata = test_data)
+
+# Evaluate and print the performance
+confusion_matrix <- table(svm_predictions, test_data$Heart.Disease)
+acc <- sum(diag(confusion_matrix))/sum(confusion_matrix)
+pre <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+rec <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+
+print(confusion_matrix)
+cat("\nAccuracy:\t", acc, "\n\n")
+cat("Precision:\t", round(pre, 2), "\n\n")
+cat("Recall:\t\t", rec, "\n\n")
+```
+
+The evaluation of the best model on the test set yielded the following metrics: Accuracy - **84*%*, Precision - **73%**, Recall - **95%**. These metrics provide insights into the overall correctness of predictions, the accuracy of positive predictions, and the model's ability to capture positive instances.
+
+> The trade-off between precision and recall shows that in the medical diagnosis field, high recall is more critical than precision.
+
+#### AUC and ROC Curve of SVM Model:
+
+```{r, echo=TRUE}
+# Create ROC curve for random forest model
+svm_roc_curve <- roc(test_data$Heart.Disease, as.numeric(svm_predictions) - 1)
+
+# Calculate AUC for random forest model
+svm_auc_value <- auc(svm_roc_curve)
+cat("SVM AUC:", svm_auc_value, "\n")
+
+# Plot ROC curve with AUC for the best performing SVM model
+plot(svm_roc_curve, col = "blue", lwd = 2, main = paste("SVM ROC Curve (AUC =", round(svm_auc_value, 3), ")"))
+abline(a = 0, b = 1, col = "darkgray", lty = 2)
+```
+
+# Conclusion
+
+In conclusion, the thorough analysis and exploration of various machine learning models, including Decision Trees, Random Forest, Boosting, SVM, PCA, and clustering, have provided valuable insights into predicting heart disease.
+
+The Random Forest model emerged as the top performer with an impressive AUC value of ~0.9 , showcasing its robustness and generalization ability. The incorporation of feature sampling contributed to the model's high performance, demonstrating the importance of diversity in the trees to reduce overfitting.
+
+Further investigation into Decision Trees highlighted the impact of pruning, where an unpruned tree outperformed a pruned one. Fine-tuning parameters such as depth, minimum sample split, minimum sample leaf, and maximum features revealed that a tree with a depth of 5, a minimum of 2 sample splits, and 10 minimum sample leaves achieved optimal accuracy.
+
+Despite a slight decrease in accuracy with boosting compared to Decision Trees, the Boosting model exhibited a competitive AUC value of 0.867. The possible influence of the threshold choice on accuracy was noted, emphasizing the importance of careful threshold selection in boosting models.
+
+The exploration of SVM models included various hyperparameter configurations, such as kernels, gamma, degree, and cost values. The best-performing SVM model, with a kernel set to Linear, gamma at 0.01, degree 2, and cost 0.1, achieved an accuracy of 84% on the test set. The emphasis on high recall over precision in medical diagnosis underscored the model's suitability for identifying potential cases of heart disease.
+
+We utilized PCA to obtain the significantly contributing variables. Based on the visual aid analysis we deduced the 8 important predictors and used them to run the logistic regression. The results were promising with an accuracy of 82% and AUC of 0.883.
+
+Clustering analysis with K-means and hierarchical clustering provided valuable insights. The comparison between k=3 and k=4 clusters favored the latter, indicating a more refined grouping with less overlap. The hierarchical clustering dendrogram, particularly with correlation distance, highlighted a structure with six clusters, suggesting its potential effectiveness over the previous Euclidean-based clustering.
+
+In summary, the combination of these diverse approaches, including dimensionality reduction, tree-based models, boosting, SVM, and clustering, contributed to a holistic understanding of predicting heart disease. The results underscore the importance of model selection, parameter tuning, and interpretation of feature importance for accurate and robust predictions in the medical domain.
+
+While each model had its strengths, Random Forest consistently demonstrated superior effectiveness in this predictive modeling task, as indicated by its higher AUC.
